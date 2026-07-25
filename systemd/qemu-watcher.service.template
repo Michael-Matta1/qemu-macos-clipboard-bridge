@@ -1,0 +1,21 @@
+[Unit]
+Description=Watches for a running macOS QEMU VM and starts/stops the clipboard bridge
+# Cap restart attempts so a persistently-failing watcher (e.g. systemd/dbus
+# unavailable) can't loop forever consuming CPU; after 5 restarts within 5
+# minutes systemd stops trying and leaves the unit in a "failed" state
+# (see docs/TROUBLESHOOTING.md's "Bridge or watcher fails to start" entry
+# for how to clear that and retry manually).
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+ExecStart=%h/.local/share/qemu-macos-clipboard-bridge/bin/qemu-watcher.sh
+Restart=on-failure
+RestartSec=3
+# Purely a 5-second polling loop with no latency requirement of its own —
+# lower its scheduling priority so it doesn't compete with more
+# time-sensitive foreground work when the system is busy.
+Nice=10
+
+[Install]
+WantedBy=default.target
