@@ -1,0 +1,15 @@
+# Example runtime configuration for qemu-macos-clipboard-bridge.
+# The real config is written by install.sh to:
+#   ~/.config/qemu-macos-clipboard-bridge/config
+#
+# Format: simple shell-sourceable KEY="value" lines.
+
+MAC_GUEST_USER="your-macos-username"
+SSH_ALIAS="qemu-macos-clipboard-bridge"
+SSH_PORT="2222"
+
+# Optional. How often (in seconds) to poll the guest's clipboard
+# changeCount. Defaults to 0.2 (200ms) if omitted. Raise this to trade
+# guest->host latency for lower SSH/CPU overhead on a resource-constrained
+# host; must be a positive number (e.g. "0.5", "1").
+#POLL_INTERVAL_SECONDS="0.2"
