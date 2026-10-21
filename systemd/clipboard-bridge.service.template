@@ -1,0 +1,21 @@
+[Unit]
+Description=QEMU macOS clipboard bridge (started/stopped by qemu-watcher.service)
+# See qemu-watcher.service.template for the rationale — caps restart
+# attempts so a persistently-failing bridge (e.g. missing config or SSH
+# key) can't loop forever consuming CPU.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+ExecStart=%h/.local/share/qemu-macos-clipboard-bridge/bin/clipboard-bridge.sh
+Restart=on-failure
+RestartSec=3
+# The host->guest loop blocks on clipnotify waiting for an X11 event,
+# which can sit idle for arbitrarily long. The script catches TERM and
+# exits promptly (it backgrounds clipnotify and `wait`s so the signal
+# can preempt the wait), but cap the stop timeout anyway so a wedged
+# script can't hold shutdown hostage indefinitely — default is already
+# 90s, this makes the intent explicit and tight.
+TimeoutStopSec=5
+KillMode=mixed
+# Not enabled directly — qemu-watcher.sh starts/stops this on demand.
