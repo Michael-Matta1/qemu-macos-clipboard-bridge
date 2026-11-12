@@ -31,7 +31,7 @@ It behaves like a "guest integration tool" (in the spirit of SPICE vdagent or Vi
 This bridge uses a highly optimized, dual event-driven architecture that achieves instantaneous synchronization with optimized CPU usage and memory consumption.
 
 - **Host → Guest:** Strictly event-driven. The Linux host waits on X11 clipboard events natively (via `clipnotify`). When a change occurs, the text is instantly pushed down a pre-established, persistent SSH pipeline directly into the memory of a native Objective-C daemon running on the guest.
-- **Guest → Host:** Near-instant event polling. A native compiled Objective-C helper (`pbcc`) runs on the guest, monitoring the `NSPasteboard` change count at highly efficient 50ms intervals using `nanosleep`. Because the helper is native, it consumes virtually zero CPU (~0.4%) and only communicates over the SSH stream when a genuine change is detected.
+- **Guest → Host:** Near-instant event polling. A native compiled Objective-C helper (`pbcc`) runs on the guest, monitoring the `NSPasteboard` change count at highly efficient 50ms intervals using `nanosleep`. macOS provides no notification when the pasteboard changes, so polling the change count is the only way to detect a copy. This is how native macOS clipboard tools and clipboard managers (such as the open-source [Maccy](https://github.com/p0deje/Maccy)) work. Because the helper is native, it consumes virtually zero CPU (~0.4%) and only communicates over the SSH stream when a genuine change is detected.
 
 ## Requirements
 

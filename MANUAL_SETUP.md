@@ -39,6 +39,14 @@ PORT=2222                       # the host port your VM forwards to the guest's 
 GUEST_USER=your-macos-username  # the macOS account the bridge will use
 ```
 
+Not sure which port your VM forwards? With the VM running, this prints its command line; look for `hostfwd=tcp::PORT-:22`:
+
+```bash
+pgrep -af 'qemu.*isa-applesmc'
+```
+
+**Note (the installer checks this for you):** QEMU's `hostfwd=tcp::PORT-:22` listens on all of your network interfaces, so the guest's SSH port is reachable from your whole LAN. The bridge itself only connects through `127.0.0.1`, so it works either way, but you can restrict the forward to your own machine by changing the rule in your QEMU launch command to `hostfwd=tcp:127.0.0.1:PORT-:22` and rebooting the VM. To see how your port is currently bound (if `ss` is installed), run `ss -ltn "sport = :$PORT"` (with `PORT` set as above): a local address of `127.0.0.1:PORT` means local-only.
+
 ## Setup steps
 
 ### 1. Install the scripts
