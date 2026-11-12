@@ -65,6 +65,12 @@ mkdir -p "$STATE_DIR"
 chmod 700 "$STATE_DIR"
 LAST_HOST_FILE="${STATE_DIR}/last_host"
 
+# Written so a supervisor without systemd (see qemu-watcher.sh, "direct"
+# backend) can find, signal and health-check this process. Harmless under
+# systemd. Removed again in cleanup().
+BRIDGE_PIDFILE="${STATE_DIR}/bridge.pid"
+printf '%s\n' "$$" > "$BRIDGE_PIDFILE"
+
 touch "$LAST_HOST_FILE"
 chmod 600 "$LAST_HOST_FILE"
 
@@ -223,15 +229,30 @@ get_change_count() {
 ) &
 bg_pid=$!
 
+# Signal the WHOLE process tree below $1, deepest first. `pkill -P $$` only
+# reaches direct children, but the ssh clients run one level further down
+# (inside the background subshells). Under systemd, KillMode=mixed cleans
+# those up through the cgroup; without systemd nothing does, so orphaned
+# ssh clients -- one of which holds the FIFO open and never sees EOF --
+# would be left behind after every stop.
+kill_descendants() {
+  local sig="$1" parent="$2" child
+  for child in $(pgrep -P "$parent" 2>/dev/null); do
+    kill_descendants "$sig" "$child"
+    kill "-$sig" "$child" 2>/dev/null || true
+  done
+}
+
 cleanup() {
   trap - EXIT TERM INT
   # Send SIGTERM first to allow children (SSH sessions, clipnotify) to
   # shut down gracefully, then SIGKILL after a brief grace period for
   # any processes that didn't exit. The previous SIGKILL-only approach
   # prevented SSH from cleanly closing ControlMaster sockets.
-  pkill -TERM -P $$ 2>/dev/null || true
+  kill_descendants TERM $$
   sleep 0.2
-  pkill -9 -P $$ 2>/dev/null || true
+  kill_descendants KILL $$
+  rm -f "$BRIDGE_PIDFILE"
   exit 0
 }
 trap cleanup EXIT TERM INT

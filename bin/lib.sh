@@ -37,6 +37,40 @@ _qmcb_log() {
 }
 
 # ---------------------------------------------------------------------------
+# Stale-bridge cleanup (service backends WITHOUT a cgroup-tracking supervisor)
+# ---------------------------------------------------------------------------
+
+_QMCB_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Kill leftovers of a bridge that died WITHOUT running its cleanup() -- i.e.
+# SIGKILL or the OOM killer. Its background loops are `while true` loops
+# that keep respawning ssh forever, and its ssh clients hold the h2g FIFO
+# open. systemd's cgroup would have swept all of that up; a plain
+# supervisor must do it explicitly. Only ever matches THIS install's script
+# path and THIS user's processes. Call only when no live bridge is wanted.
+qmcb_kill_stale_bridge() {
+  local uid old=""; uid=$(id -u)
+  # The bridge is started via setsid, so its PID is also its process-group
+  # ID. Use that to reach its orphaned clipnotify WITHOUT touching other
+  # clipnotify users (e.g. clipmenu): -g AND -x must both match.
+  if [[ -r "${_QMCB_STATE_DIR}/bridge.pid" ]]; then read -r old < "${_QMCB_STATE_DIR}/bridge.pid" || old=""; fi
+  [[ "$old" =~ ^[0-9]+$ ]] && pkill -KILL -u "$uid" -g "$old" -x clipnotify 2>/dev/null
+  pkill -KILL -u "$uid" -f "^[^ ]*bash ${_QMCB_LIB_DIR}/clipboard-bridge\\.sh\$" 2>/dev/null
+  pkill -KILL -u "$uid" -f '^ssh .*/\.cache/qemu-macos-clipboard-bridge/pbcc --(watch|listen)' 2>/dev/null
+  rm -f "${_QMCB_STATE_DIR}/bridge.pid"
+  return 0
+}
+
+# Truncate FILE if it has grown beyond KB kilobytes. Used for the stderr logs
+# of the direct backend (bridge.out / watcher.out), which -- unlike the
+# systemd journal -- nothing else rotates. A bridge that fails instantly on
+# every 5s retry would otherwise grow bridge.out without bound.
+qmcb_cap_file() {
+  [[ -n "$(find "$1" -maxdepth 0 -size +"$2"k 2>/dev/null)" ]] && : > "$1"
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # VM detection
 # ---------------------------------------------------------------------------
 
