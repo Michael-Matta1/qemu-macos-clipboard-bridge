@@ -59,6 +59,15 @@ confirm_deletion() {
 # ---------------------------------------------------------------------------
 
 stop_services() {
+  # "direct" backend (no systemd): stop watcher + bridge via the control script
+  # Only when this install actually uses it; systemd installs are stopped via
+  # systemctl below, exactly as before.
+  if [[ -x "${INSTALL_PREFIX}/bin/qmcb-ctl" ]] && \
+     grep -q '^SERVICE_BACKEND="direct"' "${CONFIG_DIR}/config" 2>/dev/null; then
+    info "Stopping watcher/bridge (direct backend) …"
+    "${INSTALL_PREFIX}/bin/qmcb-ctl" stop >/dev/null 2>&1 || true
+  fi
+
   if systemctl --user is-active --quiet qemu-watcher.service 2>/dev/null; then
     info "Stopping qemu-watcher.service …"
     systemctl --user stop qemu-watcher.service 2>/dev/null || true

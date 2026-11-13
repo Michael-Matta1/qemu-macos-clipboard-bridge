@@ -36,6 +36,20 @@ SSH_SOCKETS_DIR="${SSH_DIR}/sockets"
 # Marker comment so uninstall.sh can safely identify our Include line
 INCLUDE_MARKER="# added by qemu-macos-clipboard-bridge installer"
 
+# Service backend: "systemd" (user units) or "direct" (no systemd: the watcher
+# is started from your X session startup file, see README). Auto-detected with
+# the same test as sd_booted(3); override with --systemd / --no-systemd.
+SERVICE_BACKEND=""
+for _arg in "$@"; do
+  case "$_arg" in
+    --systemd)    SERVICE_BACKEND="systemd" ;;
+    --no-systemd) SERVICE_BACKEND="direct" ;;
+  esac
+done
+if [[ -z "$SERVICE_BACKEND" ]]; then
+  if [[ -d /run/systemd/system ]]; then SERVICE_BACKEND="systemd"; else SERVICE_BACKEND="direct"; fi
+fi
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -451,7 +465,8 @@ install_runtime() {
   cp "${SCRIPT_DIR}/bin/lib.sh"                "${INSTALL_PREFIX}/bin/lib.sh"
   cp "${SCRIPT_DIR}/bin/clipboard-bridge.sh"   "${INSTALL_PREFIX}/bin/clipboard-bridge.sh"
   cp "${SCRIPT_DIR}/bin/qemu-watcher.sh"       "${INSTALL_PREFIX}/bin/qemu-watcher.sh"
-  chmod +x "${INSTALL_PREFIX}/bin/"*.sh
+  cp "${SCRIPT_DIR}/bin/qmcb-ctl"              "${INSTALL_PREFIX}/bin/qmcb-ctl"
+  chmod +x "${INSTALL_PREFIX}/bin/"*.sh "${INSTALL_PREFIX}/bin/qmcb-ctl"
   ok "Installed runtime scripts to ${INSTALL_PREFIX}/bin/"
 }
 
@@ -464,6 +479,7 @@ write_runtime_config() {
 MAC_GUEST_USER="$user"
 SSH_ALIAS="qemu-macos-clipboard-bridge"
 SSH_PORT="$port"
+SERVICE_BACKEND="$SERVICE_BACKEND"
 EOF
   chmod 600 "${CONFIG_DIR}/config"
   ok "Wrote runtime config to ${CONFIG_DIR}/config"
@@ -487,6 +503,25 @@ install_systemd_units() {
 
   systemctl --user enable --now qemu-watcher.service
   ok "Enabled and started qemu-watcher.service"
+}
+
+install_direct_backend() {
+  # No systemd user manager: nothing to register. Start the watcher now and
+  # tell the user how to start it with their session. We deliberately do not
+  # edit session startup files ourselves (same policy as ~/.ssh/config: only
+  # touch what we can undo safely).
+  local ctl="${INSTALL_PREFIX}/bin/qmcb-ctl"
+  info "No systemd detected: using the direct (no-service-manager) backend."
+  if "$ctl" restart >&2; then
+    ok "Watcher started for this session."
+  else
+    warn "Could not start the watcher now; start it with: $ctl start"
+  fi
+  echo >&2
+  info "To start it automatically at every login, add this line to your X session"
+  info "startup file (for example ~/.xinitrc, ~/.xprofile, your window manager's"
+  info "autostart, or on antiX ~/.desktop-session/startup):"
+  info "    ${ctl} start"
 }
 
 # ---------------------------------------------------------------------------
@@ -517,7 +552,11 @@ main() {
 
   install_runtime
   write_runtime_config "$mac_user" "$detected_port"
-  install_systemd_units
+  if [[ "$SERVICE_BACKEND" == "systemd" ]]; then
+    install_systemd_units
+  else
+    install_direct_backend
+  fi
 
   # clipboard-bridge.sh only reads its config once, at its own startup —
   # if it was already running (e.g. this is a re-install with a new
@@ -525,7 +564,7 @@ main() {
   # holding stale credentials in memory and won't pick up what we just
   # wrote until something restarts it. Do that now rather than leaving
   # the user with a silently-broken bridge until their next VM reboot.
-  if systemctl --user is-active --quiet clipboard-bridge.service 2>/dev/null; then
+  if [[ "$SERVICE_BACKEND" == "systemd" ]] && systemctl --user is-active --quiet clipboard-bridge.service 2>/dev/null; then
     info "clipboard-bridge.service is already running; restarting it to apply the updated configuration …"
     systemctl --user restart clipboard-bridge.service 2>/dev/null || \
       warn "Could not restart clipboard-bridge.service; it will pick up the new config next time the VM restarts."
@@ -534,7 +573,11 @@ main() {
   echo
   ok "Installation complete!"
   info "The clipboard bridge will start automatically whenever your macOS VM boots."
-  info "Run 'systemctl --user status qemu-watcher.service' to check the watcher."
+  if [[ "$SERVICE_BACKEND" == "systemd" ]]; then
+    info "Run 'systemctl --user status qemu-watcher.service' to check the watcher."
+  else
+    info "Run '${INSTALL_PREFIX}/bin/qmcb-ctl status' to check the watcher."
+  fi
   info "Run './uninstall.sh' at any time to remove everything."
 }
 

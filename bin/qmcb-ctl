@@ -1,0 +1,103 @@
+#!/bin/bash
+# qmcb-ctl — start / stop / status for installs WITHOUT systemd (the "direct"
+# service backend: sysVinit, runit, OpenRC, s6, dinit, ...).
+#
+# Run it as your normal user, from inside your X session (the bridge needs
+# your DISPLAY/XAUTHORITY and your SSH key; it is not a system service).
+
+set -u
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/lib.sh"
+
+WATCHER="${SCRIPT_DIR}/qemu-watcher.sh"
+WATCHER_PIDFILE="${_QMCB_STATE_DIR}/watcher.pid"
+BRIDGE_PIDFILE="${_QMCB_STATE_DIR}/bridge.pid"
+
+# pid_of PIDFILE CMDLINE-PATTERN -> prints the PID if it is alive and is ours
+pid_of() {
+  local pid
+  [[ -r "$1" ]] || return 1
+  read -r pid < "$1" || return 1
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  grep -qa "$2" "/proc/$pid/cmdline" 2>/dev/null || return 1
+  grep -q '^State:[[:space:]]*Z' "/proc/$pid/status" 2>/dev/null && return 1
+  echo "$pid"
+}
+
+# find_watcher / find_bridge: pidfile first, then the process table. The
+# fallback keeps start/stop/status correct even if this shell's
+# XDG_RUNTIME_DIR differs from the one the watcher was launched with (the
+# pidfiles then live in a different directory).
+find_watcher() {
+  pid_of "$WATCHER_PIDFILE" 'qemu-watcher\.sh' && return 0
+  pgrep -o -u "$(id -u)" -f "^[^ ]*bash ${WATCHER}\$"
+}
+find_bridge() {
+  pid_of "$BRIDGE_PIDFILE" 'clipboard-bridge\.sh' && return 0
+  pgrep -o -u "$(id -u)" -f "^[^ ]*bash ${SCRIPT_DIR}/clipboard-bridge\.sh\$"
+}
+
+stop_pid() {   # stop_pid PID  (TERM, wait up to ~5s, then KILL)
+  local pid="$1" i
+  kill -TERM "$pid" 2>/dev/null || return 0
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    [[ -d "/proc/$pid" ]] && ! grep -q '^State:[[:space:]]*Z' "/proc/$pid/status" 2>/dev/null || return 0
+    sleep 0.5
+  done
+  kill -KILL "$pid" 2>/dev/null || true
+}
+
+cmd_status() {
+  local w b rc=0
+  if w=$(find_watcher); then echo "watcher: running (PID $w)"; else echo "watcher: not running"; rc=3; fi
+  if b=$(find_bridge); then echo "bridge:  running (PID $b)"; else echo "bridge:  not running (normal while no macOS VM is up)"; fi
+  return $rc
+}
+
+# env_of PID VAR -> value of VAR in that process's environment
+env_of() { tr '\0' '\n' < "/proc/$1/environ" 2>/dev/null | sed -n "s/^$2=//p" | head -n 1; }
+
+cmd_start() {
+  local w
+  if w=$(find_watcher); then
+    # A watcher left over from a previous X session (logout/login without a
+    # reboot) still points at the dead DISPLAY/XAUTHORITY and would silently
+    # break host->guest sync. Same session: nothing to do. New session: restart.
+    if [[ "$(env_of "$w" DISPLAY)" == "${DISPLAY:-}" && "$(env_of "$w" XAUTHORITY)" == "${XAUTHORITY:-}" ]]; then
+      echo "watcher already running"
+      return 0
+    fi
+    echo "watcher belongs to a previous X session; restarting it"
+    cmd_stop >/dev/null
+  fi
+  if [[ -z "${DISPLAY:-}" ]]; then
+    echo "WARNING: DISPLAY is not set; host->guest sync cannot work. Start this from inside your X session." >&2
+  fi
+  qmcb_cap_file "${_QMCB_STATE_DIR}/watcher.out" 512
+  if command -v setsid >/dev/null 2>&1; then
+    ( setsid "$WATCHER" >>"${_QMCB_STATE_DIR}/watcher.out" 2>&1 </dev/null & )
+  else
+    ( nohup "$WATCHER" >>"${_QMCB_STATE_DIR}/watcher.out" 2>&1 </dev/null & )
+  fi
+  sleep 1
+  cmd_status
+}
+
+cmd_stop() {
+  local pid
+  # watcher first, so it cannot restart the bridge behind our back
+  if pid=$(find_watcher); then stop_pid "$pid"; fi
+  if pid=$(find_bridge); then stop_pid "$pid"; fi
+  qmcb_kill_stale_bridge
+  cmd_status || true
+}
+
+case "${1:-}" in
+  start)   cmd_start ;;
+  stop)    cmd_stop ;;
+  restart) cmd_stop; cmd_start ;;
+  status)  cmd_status ;;
+  *) echo "usage: ${0##*/} {start|stop|restart|status}" >&2; exit 2 ;;
+esac

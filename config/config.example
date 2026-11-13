@@ -13,3 +13,12 @@ SSH_PORT="2222"
 # guest->host latency for lower SSH/CPU overhead on a resource-constrained
 # host; must be a positive number (e.g. "0.5", "1").
 #POLL_INTERVAL_SECONDS="0.05"
+
+# Optional. How the watcher runs the bridge:
+#   "systemd" (default if omitted) - via `systemctl --user` units
+#   "direct"                       - no systemd: the watcher starts and
+#                                    supervises the bridge itself; use
+#                                    `qmcb-ctl` to start/stop/status.
+# install.sh sets this automatically (it picks "direct" when
+# /run/systemd/system does not exist).
+#SERVICE_BACKEND="systemd"
